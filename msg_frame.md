@@ -20,9 +20,9 @@ The protocol is built around the following principles:
 At its core, the protocol defines a fixed-length header followed by a variable-length body. The header includes metadata for routing, validation, and interpretation. The body may contain plaintext, encrypted payloads, or structured extensions.
 
 ```text
-+----------------+----------------+----------------+
-|     Header     |      Body      |   Signature    |
-+----------------+----------------+----------------+
++----------------+------------+----------------+----------------+
+|     Header     | Extensions |      Body      |   Signature    |
++----------------+------------+----------------+----------------+
 ```
 
 Frames are self-contained and designed for forward compatibility. Parsers must ignore unknown extensions and enforce strict validation on known fields.
@@ -44,10 +44,11 @@ The header is a fixed-size structure with the following fields:
 | Payload Type      | 1    | 0x01=UTF-8, 0x02=CBOR, 0x03=Opaque (encrypted), 0x04=Binary   | 
 | Payload Len       | 4    | Length of payload (bytes)                                     | 
 | Timestamp         | 8    | Unix time in milliseconds                                     | 
+| Header CRC.       | 4.   | CRC-32 (IEEE 802.3) over Magic through Timestamp                       | 
 | Extension Flags   | 1    | Per-extension policy flags (see below)                        | 
 | Extension Count   | 1    | Number of TLV-style extensions                                | 
 | Extensions        | var  | Ordered TLVs (see registry)                                   |
-| Header CRC        | 4    | CRC-32 (IEEE 802.3) over header region                        | 
+| Extension CRC     | 4    | CRC-32 (IEEE 802.3) over Extension region                        | 
 | Payload           | var  | Message content (plaintext or ciphertext)                     |
 | Payload CRC       | 4    | CRC-32 (IEEE 802.3) over payload bytes                        |
 | Message Signature | 64   | Ed25519 signature over signed scope                           |
@@ -89,6 +90,7 @@ The header is a fixed-size structure with the following fields:
   - Rationale: Enables time-based processing and replay detection.
   - MUST be in UTC; parsers MUST reject timestamps too far in the future. Configurable skew (e.g., ±5 minutes) is RECOMMENDED.
   - Receivers MAY use this for logging, ordering, or TTL enforcement.
+- **Header CRC**
 - **Extension Flags:** Bitfield indicating per-extension policies (e.g., criticality, encryption, compression). See below for bit definitions.
   - Rationale: Provides granular control over extension handling.
   - MUST be interpreted as a bitfield; reserved bits MUST be zero.
@@ -101,7 +103,7 @@ The header is a fixed-size structure with the following fields:
   - Rationale: Enables extensibility and future-proofing.
   - MUST be ordered by ascending Type; parsers MUST reject frames with out-of-order extensions.
   - Unknown non-critical extensions MUST be ignored; unknown critical extensions MUST cause rejection.
-- **Header CRC:** CRC-32 (IEEE 802.3) checksum over the header region (from Magic through Extensions).
+- **Extension CRC:** CRC-32 (IEEE 802.3) checksum over the extension region (from Extension flags through Extensions).
   - Rationale: Detects corruption in the header.
   - MUST be validated before processing the frame further.
   - Parsers MUST reject frames with invalid CRC.
