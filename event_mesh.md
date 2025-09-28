@@ -138,15 +138,7 @@ The Flags field is a bitmask that provides additional information about the even
 ## 2.2 Payload
 The payload contains the actual event data. The format of the payload is determined by the event type and can vary widely. It is the responsibility of the application to define and interpret the payload format based on the event type.
 
-All payloads MUST begin with mandatory TLV for the signature as described below. The rest of the payload is application-specific and MUST be defined by the application.
-
-|   Type (1B)  |  Length (1B)  |   Value (variable)       |
-|--------------|---------------|--------------------------|
-|   0xFE       |   N (1B)      |   Signature (N bytes)    |
-
-* **Type**: A 1-byte field indicating the type of the TLV. For the signature, this value is 0xFE.
-* **Length**: A 1-byte field indicating the length of the Value field in bytes.
-* **Value**: A variable-length field containing the actual value. For the signature, this is the signature data. All signatures MUST be Ed25519 signatures.
+All payloads MUST begin with mandatory TLV for the signature as in section 6. The rest of the payload is application-specific and MUST be defined by the application.
 
 Not all payloads require the full signature. Below is a table showing what level of signature is required for each event type.
 
@@ -207,23 +199,23 @@ command will be executed, as it depends on the capabilities and state of the rec
 
 A NODE MUST validate the command before executing it. If the command is not recognized or cannot be executed, the NODE MUST ignore the command. If the command is validated the NODE SHOULD execute it.
 
-The command payload MUST include the following TLVs:
+The command payload MUST include the following TLVs as defined in section 6:
 * **Command Name**: A string representing the name of the command to be executed.
 * **Command Parameters**: A structured data format (e.g., JSON) containing any parameters required for the command.
-* **Signature - Strong**: An Ed25519 signature for the Command event.
+* **Signature - Strong(0xA4)**: An Ed25519 signature for the Command event.
 
-* See section 6 for details on TLV format and types.
+See section 6 for details on TLV format and types.
 
 ### 2.2.3 Heartbeat Payload
 For Heartbeat events, the payload MUST contain the NODE's identifier (e.g., a UUID) and MAY include additional status information, such as CPU usage, memory usage, or uptime. The format of the payload is application-specific.
 
-The heartbeat payload MUST include the following TLVs:
+The heartbeat payload MUST include the following TLVs as defined in section 6:
 * **Node ID**: A unique identifier for the NODE, such as a UUID.
 * **Uptime**: The NODE's uptime in seconds.
 * **Event Digest**: A rolling hash, Bloom filter, or digest of recent events sent or received by the NODE.
 * **Rate Signal**: Information about the NODE's event sending and receiving rates, as well as any congestion hints (e.g., ECN status).
 * **Propagation Map**: Information about the NODE's position in the mesh, such as hop count from origin, remaining TTL, or origin NODE ID.
-* **Signature - Weak**: An Ed25519 signature for the Heartbeat event.
+* **Signature - Weak(0xA2)**: An Ed25519 signature for the Heartbeat event.
 
 See section 6 for details on TLV format and types.
 
@@ -232,13 +224,13 @@ NODEs MAY include any combination of the above TLVs in the Heartbeat payload. Th
 ### 2.2.4 Join Payload
 For Join events, the payload MUST include information about the NODE's capabilities and configuration. This information helps other NODEs understand how to interact with the joining NODE.
 
-The join payload MUST include the following TLVs:
+The join payload MUST include the following TLVs as defined in section 6:
 * **Node ID**: A unique identifier for the NODE, such as a UUID.
 * **Supported Types**: A bit field indicating the event types supported by the NODE.
 * **Max Relationships**: The maximum number of relationships the NODE can support.
 * **Heartbeat Interval**: The recommended interval for sending Heartbeat events.
 * **Status**: Application-specific status information.
-* **Signature**: An Ed25519 signature for the Join event.
+* **Signature - Strong(0xA4)**: An Ed25519 signature for the Join event.
 
 See section 6 for details on TLV format and types.
 
@@ -298,7 +290,7 @@ When a NODE receives an event, it MUST check the Event ID to determine if it has
 - A NODE MUST NOT modify any other fields in the EMM packet, except for the TTL and Checksum fields. The Checksum MUST be recalculated after modifying the TTL field.
 - A NODE MUST cache Event IDs for a configurable period to prevent processing duplicate events. The cache duration is application-specific and MAY be based on factors such as event frequency and network conditions.
   - RECOMMENDED default cache duration is 5 minutes.
-- A NODE MAY implement additional filtering or processing logic based on the event type, flags, or payload content. This logic is application-specific and MUST be defined by the application.
+- A NODE MAY implement additional filtering or processing logic based on the event type, flags, or payload content. This logic is application-specific and MUST be defined by the application. This MAY include parsing TLVs as defined in Section 6.
 
 ## 3.5 Reliability
 EMP is designed to be lightweight and fast, but it does not guarantee absolute reliability. To improve reliability, NODEs can implement application-level acknowledgments or retries for critical events. However, this is optional and depends on the specific use case and requirements of the application.
