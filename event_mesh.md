@@ -2,518 +2,298 @@
 
 # Abstract
 The Event Mesh Protocol (EMP) is a lightweight, event-driven communication protocol designed to facilitate seamless interaction between distributed systems and services. EMP enables the efficient exchange of events, allowing applications to respond to changes in real-time and promoting a decoupled architecture.
-EMP is built to take advantage of the speed of UDP for low-latency event delivery, while also providing mechanisms for increased, but not absolute, reliability and message integrity.
+EMP is built to take advantage of the speed of UDP for low-latency event delivery, while also providing mechanisms for message integrity and authenticity.
 
-EMP make no guarantees about message delivery, ordering, or duplication. It is the responsibility of the application to handle these aspects if required.
-EMP Does not offer encryption or authentication. If required, QUIC can be used as a transport protocol to provide these features.
+EMP makes no guarantees about message delivery, ordering, or duplication. It is the responsibility of the application to handle these aspects if required.
+EMP Does not offer secrecy by default. If required, QUIC can be used as a transport protocol to provide these features.
 
-## Table of Contents
-1. **[Overview](# Overview)**
-2. **[EMM Packet Structure](# EMM Packet Structure)**
-   - 2.1 **[Header Format](# Header Format)**
-   -  2.2 **[Payload](# Payload)**
-   - 2.3 **[Time to Live (TTL)](# Time to Live (TTL))**
-   - 2.4 **[Example EMM Packet](# Example EMM Packet)**
-3. **[Protocol Operations](# Protocol Operations)**
-   - 3.1 **[NODE Joining](# NODE Joining)**
-   - 3.2 **[NODE relationships](# NODE relationships)**
-   - 3.3 **[Event Publishing](# Event Publishing)**
-   - 3.4 **[Event Receiving and Propagation](# Event Receiving and Propagation)**
-   - 3.5 **[Reliability](# Reliability)**
-   - 3.6 **[NODE Leaving](# NODE Leaving)**
-4. **[Network features](# Network features)**
-   - 4.1 **[DSCP usage](# DSCP usage)**
-   - 4.2 **[ECN usage](# ECN usage)**
-   - 4.3 **[QUIC as a transport protocol](# QUIC as a transport protocol)**
-5. **[Security](# Security)**
-   - 5.1 **[Replay attacks](# Replay attacks)**
-   - 5.2 **[Integrity](# Integrity)**
-   - 5.3 **[Confidentiality](# Confidentiality)**
-   - 5.4 **[Authentication](# Authentication)**
-6. **[Extensions (TLV)](# Extensions (TLV))**
-   - 6.1 **[TLV Types](# TLV Types)**
 
 # 1. Overview
 The Event Mesh Protocol (EMP) is designed to address the challenges of modern distributed systems, where services need to communicate asynchronously and respond to events in real-time. EMP provides a standardized way to publish events and have them propagate quickly throughout a network of NODEs.
 
-It is a stateless protocol with the goal to quickly and robustly deliver events to interested parties. EMP is particularly well-suited for applications that require high throughput and low latency, such as IoT systems, microservices architectures, and real-time analytics platforms. It can also be used as the basis for an event bus or message broker. However, in such cases some of the functionality must be added by the application.
+The goal is to quickly and robustly deliver events to interested parties while maintaining as little state as possible. EMP is particularly well-suited for applications that require high throughput and low latency, such as IoT systems, microservices architectures, and real-time analytics platforms. It can also be used as the basis for an event bus or message broker. However, in such cases some of the functionality must be added by the application.
 
-EMP NODEs can act as both event producers and consumers, allowing for a flexible and dynamic event-driven architecture. The protocol supports various event types, including simple notifications, complex data payloads, and command messages.
+EMP NODEs can act as both event producers and consumers, allowing for a flexible and dynamic event-driven architecture.
 
-NODEs can communicate directly with each other or through intermediary NODEs that can route events based on predefined rules or subscriptions. This allows for a scalable and resilient event mesh that can adapt to changing network conditions and service availability.
+NODEs can communicate directly with each other or through intermediary NODEs that can route events based on predefined rules. This allows for a scalable and resilient event mesh that can adapt to changing network conditions and service availability.
 
-NODEs communicate using EMM (Event Mesh Message) packets, which are designed to be compact and efficient. Each EMM packet contains a header with metadata about the event, such as its type, source, and timestamp, as well as the event payload itself. All messages MUST be smaller than the maximum transmission unit (MTU) of the underlying network to avoid fragmentation. 
+NODEs communicate using EMM (Event Mesh Message) packets, which are designed to be compact and efficient. Each EMM packet contains a header with metadata about the event, such as its type, source, and timestamp, as well as the event payload itself. All messages MUST be smaller than the maximum transmission unit (MTU) of the underlying network to avoid fragmentation as the protocol does not handle fragmentation.
+
+> EMP does not handle fragmentation. It is the responsibility of the application to ensure that messages are smaller than the MTU of the underlying network. 
+> Recommended limit will try to account for common MTU sizes, but may not be suitable for all networks.
 
 # 2. EMM Packet Structure
 An EMM packet consists of a fixed-size header followed by a variable-size payload. The header contains essential information for routing and processing the event. The payload is variable, but MUST be less than the MTU of the underlying network.
-RECOMMENDED maximum size is 512 bytes.
+RECOMMENDED maximum size is [MAX_PACKET_SIZE](#max_packet_size).
 
 All multi-byte fields are in network byte order (big-endian).
 
-## 2.1 Header Format
-The EMM header is 8 bytes long and consists of the following fields:
+## 2.1 Header Format table
 
-| Field          | Size | Description                     |
-|----------------|------|---------------------------------|
-| Version        | 3b   | Protocol version (currently 1)  |
-| Flags          | 2b   | Control flags (See 2.1.2)       |
-| Type           | 3b   | Event type (See 2.1.1)          |
-| Event ID       | 2B   | Unique identifier for the event |
-| Epoch          | 2B   |                                 |
-| Offset         | 2B   |                                 |
-| Payload Length | 1B   | Length of the payload in bytes  |
-| Payload        | Var  | Event data (variable length)    |
+| Field          | Size (bytes)                                           | Description                          |
+|----------------|--------------------------------------------------------|--------------------------------------|
+| Version        | 1                                                      | Protocol version (currently 1)       |
+| Message ID     | 4                                                      | Unique identifier for the message    |
+| Flags          | 1                                                      | Bitfield                             |
+| Event Type     | 1                                                      | Type of the event                    |
+| Timestamp      | 8                                                      | Unix timestamp (seconds since epoch) |
+| Payload Length | 2                                                      | Length of the payload in bytes       |
+| Payload        | Variable (up to [MAX_PAYLOAD_SIZE](#max_payload_size)) | The event data                       |
 
-```text
-0                   1                   2                   3
-0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| Ver.| Fl| Type| Event ID (16 bits)            |Epoch (16 bits)|
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|               | Offset (16 bits)              | Payload Len   |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                                                               |
-~                         Payload (variable)                    ~
-|                                                               |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
+# 2.2 Header Field Descriptions
+### Version
+A field indicating the version of the EMP protocol being used. This allows for future enhancements and backward compatibility.
+Currently, the only valid value is 1 (0x01).
+### Message ID
+A unique identifier for the message, allowing for tracking and correlation of events. This can be used for debugging and logging purposes. Message ID MUST be cryptographically random to avoid collisions.
+### Flags
+A bitfield providing additional information about the EMM packet. See section 2.3 for more details.
+### Event Type
+A field indicating the type of event being sent. See section 3 for more details.
+### Timestamp
+The time the event was created, represented as a Unix timestamp (seconds since epoch). This helps in ordering events and handling time-sensitive data.
+### Payload Length
+The length of the payload in bytes. This allows the receiver to know how much data to read for the payload.
+### Payload
+The actual event data being transmitted. The payload is structured as a set of TLV (Type-Length-Value) encoded fields to allow for flexibility and extensibility. The simplest one being a single string or binary blob. See section 4 for more details.
 
-* **Version**: A 3-bit field indicating the version of the EMP protocol. The current version is 1 (0b001).
-  * RECOMMENDED default is 0b001
-  * Bitmask: 0b11100000
-* **Flags**: A 3-bit field used for control flags. See section 2.1.2 for details.
-  * RECOMMENDED default is 0b00 (no flags set)
-  * Bitmask: 0b00011000
-* **Type**: A 2-bit field indicating the type of event. See section 2.1.1 for details.
-  * RECOMMENDED default is 0b000 (Notification)
-  * Bitmask: 0b00000111
-* **Event ID**: A 2-byte field that serves as a unique identifier for the event. This ID is used to prevent duplicate processing of events. 
-  * RECOMMENDED to be a random or pseudo-random value to minimize the risk of collisions.
-  * The combination of Event ID, Epoch, and Offset MUST be unique for each event generated by a NODE.
-  * The Event ID is primarily used to identify and track events as they propagate through the mesh.
-  * The Event ID is NOT required to be globally unique across all NODEs, but it MUST be unique for each event generated by a NODE within the context of the Epoch and Offset.
-* **Epoch**: A 2-byte modulo 65536 counter that increments every second. This helps to avoid Event ID collisions over time.
-  * RECOMMENDED to start at 0 and increment by 1 every minute, wrapping around to 0 after reaching 65535.
-  * The Epoch is used in conjunction with the Event ID to provide a larger space for unique event identification.
-* **Offset**: A 2-byte field that is used to divide the Epoch into smaller time intervals. This allows for finer granularity in event identification within the same Epoch.
-  * RECOMMENDED to start at 0 and increment by 1 for each event generated within the same Epoch, wrapping around to 0 after reaching 65535.
-* **Payload Length**: A 1-byte field indicating the length of the payload in bytes. The maximum payload length is 256 bytes.
-  * RECOMMENDED default is 0x00 (no payload)
-* **Payload**: A variable-length field containing the actual event data. The length of this field is specified by the Payload Length field.
+## 2.3 Flags Bitfield
+The Flags field is a bitfield that provides additional information about the EMM packet. The following flags are defined:
+- **Bit 0 (0x01)**: Urgent - Indicates that the event is urgent and should be processed with higher priority.
+- **Bit 1 (0x02)**: Encryption - Indicates that the payload is encrypted. The application layer MUST handle decryption.
+  - If this bit is set, the payload MUST include an Encryption Metadata field (Type 0x11) to provide necessary metadata for decryption.
+- **Bit 2 (0x04)**: Compressed - Indicates that the payload is compressed. The application layer MUST handle decompression.
+- **Bits 3-7**: Reserved for future use. MUST be set to 0 in version 1. Applications MUST ignore these bits if they are set to 1.
 
-### 2.1.1 Event Types
-The Type field can be thought of as the "message type" or "event type". It indicates what kind of event is being transmitted. This helps NODEs to understand how to process the event.
-The Type field in the header can take on the following values:
+# 3. Event Types
+Event types are represented as a single byte, allowing for up to 256 different event types. The following event types are defined:
+- **0x01**: Hello - Used for NODE discovery and initial handshake.
+- **0x02**: Heartbeat - Sent periodically to indicate that a NODE is alive.
+- **0x03**: Event - The core event message type used to transmit event data.
 
-| Value | Name         | Description                                                               |
-|-------|--------------|---------------------------------------------------------------------------|
-| 0b000 | Notification | A simple notification event, typically used for status updates or alerts. |
-| 0b001 | Command      | An event that represents a command to be executed by the receiving NODE.  |
-| 0b010 | Heartbeat    | A periodic event used to indicate that a NODE is alive and functioning.   |
-| 0b011 | Join         | Used to join a network.                                                   |
-| 0b100 | Reserved     | Reserved for future use.                                                  |
-| 0b101 | Reserved     | Reserved for future use.                                                  |
-| 0b110 | Reserved     | Reserved for future use.                                                  |
-| 0b111 | Reserved     | Reserved for future use.                                                  |
+# 3.1 Minimal Event Types
+Below are the minimal event types and their expected payload structures. Additional information can be included in the payload as needed, but the core fields MUST be present.
 
-* **Notification**: Used for sending simple notifications, such as status updates or alerts. The payload MAY contain a message string or a structured data format (e.g., JSON).
-* **Command**: Represents a command that the receiving NODE MAY execute. The payload typically contains the command name and any necessary parameters. There is no guarantee that the command will be executed,
-* **Heartbeat**: A periodic event sent by NODEs to indicate that they are alive and functioning. The payload MUST contain the NODE's identifier and MAY include additional status information.
-* **Join**: Used by a NODE to join the event mesh. The payload MAY include information about the NODE's capabilities and configuration.
-* **Reserved**: These values are reserved for future use and MUST NOT be used in the current version of the protocol.
+## 3.1 Hello EMM
+The Hello event is used for NODE discovery and initial handshake. It contains information about the NODE, such as its ID and capabilities. The payload of a Hello event typically includes the following fields:
+- NODE ID (Type 0x14)
+- Capabilities (Type 0x04) - A binary blob describing the NODE's capabilities.
 
-### 2.1.2 Flags
-The Flags field is a bitmask that provides additional information about the event. The following flags are defined:
+## 3.2 Heartbeat EMM
+The Heartbeat event is sent periodically by a NODE to indicate that it is alive and functioning. The payload of a Heartbeat event typically includes the following fields:
+- NODE ID (Type 0x14)
+- Timestamp (Type 0x15) - The time the heartbeat was sent.
 
-| Value | Name         | Description                                                             |
-|-------|--------------|-------------------------------------------------------------------------|
-| 0b00  | Urgent       | Indicates that the event is urgent and should be processed immediately. |
-| 0b01  | Reserved     | Reserved for future use.                                                |
-| 0b10  | Reserved     | Reserved for future use.                                                |
-| 0b11  | Reserved     | Reserved for future use.                                                |
+## 3.3 Event EMM
+The Event event is the core message type used to transmit event data. The payload of an Event typically includes the following fields:
+- Event Name (Type 0x01) - A string identifying the event.
 
-* **Urgent**: When set, this flag indicates that the event is urgent and should be processed immediately by the receiving NODE. This MAY influence the NODE's prioritization of event processing.
-* **Reserved**: These bits are reserved for future use and MUST be set to zero.
+# 4. Payload Structure
+The payload of an EMM packet is designed to be flexible and extensible. It is structured as a series of TLV (Type-Length-Value) encoded fields. Each field consists of:
+- **Type**: A 1-byte identifier indicating the type of the field.
+- **Length**: A 1-byte field indicating the length of the Value in bytes.
+- **Value**: The actual data of the field, with a length specified by the Length field.
 
-## 2.2 Payload
-The payload contains the actual event data. The format of the payload is determined by the event type and can vary widely. It is the responsibility of the application to define and interpret the payload format based on the event type.
+This structure allows for easy addition of new field types without breaking compatibility with existing implementations. NODEs MUST ignore unknown field types, allowing for forward compatibility.
 
-All payloads MUST begin with mandatory TLV for the signature as in section 6. The rest of the payload is application-specific and MUST be defined by the application.
+The length of a single field is limited to 255 bytes due to the 1-byte Length field. If a field's data exceeds this limit, it MUST be split into multiple fields of the same Type, each with its own Length and Value.
+> Rationale: This keeps the protocol simple and avoids the need for more complex length encoding. And also makes it less likely to accidentally exceed the [MAX_PAYLOAD_SIZE](#max_payload_size).
 
-Not all payloads require the full signature. Below is a table showing what level of signature is required for each event type.
+## 4.1 Core Field Types
+The following field types are defined as core types that all NODEs should recognize:
+- **0x01**: String - A UTF-8 encoded string.
+- **0x02**: Integer - A 4-byte signed integer in network byte order.
+- **0x03**: Float - A 4-byte IEEE 754 big-endian floating-point number in network byte order.
+- **0x04**: Binary - A binary blob of data.
+- **0x05**: JSON - A UTF-8 encoded JSON object.
 
-| Event Type   | Signature Required |
-|--------------|--------------------|
-| Notification | 32B                |
-| Command      | 64B                |
-| Heartbeat    | 16B                |
-| Join         | 64B                |
+## 4.2 Security Field Types
+To enhance security, the following field types are defined:
+- **0x10**: HMAC - A 32-byte HMAC-SHA256 of the canonical bytes for integrity verification.
+  - The HMAC is computed over the exact bytes: the 17-byte header as sent (Version, Message ID, Flags, Event Type, Timestamp, Payload Length) concatenated with the canonicalized payload bytes (see Canonicalization below), excluding the HMAC (0x10) and Signature (0x12) fields themselves.
+  - The HMAC field MUST appear after all data fields and (if present) after Public Key (0x13) and Auth Key ID (0x18), and MUST appear immediately before Signature (0x12) if a signature is present.
+  - If the HMAC field is present, the receiver MUST verify the HMAC in constant-time before processing the payload. If the verification fails, the payload MUST be discarded.
 
-**Validation Logic**
-- If the payload does not contain the required signature TLV, the event MUST be discarded.
-- If the signature is present but invalid, the event MUST be discarded.
-- If the signature is valid, the event MAY be processed further based on its type and payload.
-- If the length of the signature does not match the expected length for the event type, the event MUST be discarded.
-- If the Type field in the TLV is not 0xFE, the event MUST be discarded.
+- **0x11**: Encryption Metadata - Metadata required for decrypting the payload, such as IV or key identifiers.
+  - This field contains information necessary for decrypting the payload if encryption is used.
+  - The actual encryption of the payload is outside the scope of EMP and must be handled by the application layer.
+  - If the Encryption Metadata field is present, the receiver MUST use the provided metadata to decrypt the payload before processing it.
+  - See [table](#421-encryption-metadata-format) for the format of the Encryption Metadata field.
 
-**Rationale**
-The signature is used to verify the authenticity and integrity of the event. Different event types have different security requirements, hence the varying signature lengths. For example, Command events may require a longer signature to ensure that only authorized NODEs can issue commands.
+- **0x12**: Signature - A digital signature of the canonical bytes for authenticity verification.
+  - The signature is computed over the exact same canonical bytes as HMAC (header || canonicalized payload excluding 0x10 and 0x12).
+  - The Signature field MUST be the last field in the payload if present.
+  - If the Signature field is present, the receiver MUST verify the signature using the sender's public key before processing the payload. If the verification fails, the payload MUST be discarded.
+  - The public key used for signature verification MUST be provided in a separate Public Key field (Type 0x13) or be retrievable via Auth Key ID (0x18) from a local trust store.
+  - The signature algorithm used is Ed25519.
+  - The Signature field is 64 bytes in length.
+  - 0x12 Signature and 0x10 HMAC fields can coexist in the same payload, allowing for both integrity and authenticity verification. If both fields are present, the receiver MUST verify the HMAC first, followed by the signature.
 
-### 2.2.1 Notification Payload
+- **0x13**: Public Key - A public key used for signature verification. Only Ed25519 is supported.
+  - This field contains the public key corresponding to the private key used to generate the Signature field (Type 0x12).
+  - The Public Key field is 32 bytes in length.
+  - If the Signature field is present and the receiver does not have a pre-shared key for the NODE/Key ID, the Public Key field MUST be present.
+  - The Public Key field MUST be placed before the Signature field in the payload.
+  - The Public Key field is optional if the receiver already has the sender's public key through other means (e.g., pre-shared or obtained via a trusted directory) and can be referenced via Auth Key ID (0x18).
 
-| Field    | Size     | Description                                       |
-|----------|----------|---------------------------------------------------|
-| Priority | 1B       | Type of notification (e.g., info, warning, error) |
-| Format   | 1B       | Format of the message (e.g., plain text, JSON)    |
-| Message  | Variable | The actual notification message                   |
+- **0x14**: NODE ID - A unique identifier for the NODE sending the payload.
+  - This field contains a unique identifier for the NODE, which can be used for tracking and auditing purposes.
+  - The NODE ID is a 16-byte UUID (Universally Unique Identifier).
 
-For Notification events, the payload MAY contain a message string or a structured data format (e.g., JSON). The format of the payload is application-specific and MUST be defined by the application.
-* **Priority**: Indicates the type of notification, such as informational, warning, or error.
-  * 0x11 - Trace
-  * 0x12 - Debug
-  * 0x13 - Info
-  * 0x14 - Notice
-  * 0x15 - Warning
-  * 0x16 - Error
-  * 0x17 - Critical
-  * 0x18-0x1F - Reserved
-* **Format**: Specifies the format of the message, such as plain text or JSON.
-  * 0x21 - Plain text
-  * 0x22 - JSON
-  * 0x23 - XML
-  * 0x24 - Binary
-  * 0x25 - YAML
-  * 0x26 - Protobuf
-  * 0x27 - MsgPack
-  * 0x28 - CBOR
-  * 0x29 - Avro
-  * 0x2A - Thrift
-  * 0x2B-0x2F - Reserved
-* **Message**: The actual notification message, which can be of variable length. The length of this field is determined by the Payload Length field in the header minus the size of the Priority and Format fields (2 bytes).
+- **0x15**: Timestamp - A 8-byte Unix timestamp indicating when the payload was signed.
+  - This field provides a timestamp for when the payload was signed, which can be used to prevent replay attacks.
+  - The timestamp is represented as a Unix timestamp (seconds since epoch).
+  - Only required if the Signature field (Type 0x12) is present and the event was signed at a different time than the event creation time.
+    - This allows for scenarios where the event is created and then signed at a later time.
 
-### 2.2.2 Command Payload
+- **0x16**: Nonce - A unique nonce used in the encryption process to ensure uniqueness.
+  - This field contains a nonce (number used once) that is used in the encryption process to ensure that the same plaintext encrypted multiple times will yield different ciphertexts.
+  - The nonce is a 12-byte random value.
+  - Only required if the Encryption Metadata field (Type 0x11) is present and the encryption algorithm requires a nonce.
 
-For Command events, the payload typically contains the command name and any necessary parameters. The format of the payload is 
-application-specific and MUST be defined by the application. The purpose of the Command event is to request the receiving NODE to perform a specific action. There is no guarantee that the 
-command will be executed, as it depends on the capabilities and state of the receiving NODE. An example can be that a NODE sends a command to other nodes to increase logging level or to start/stop a specific service.
+- **0x17**: Key Identifier - An identifier for the encryption key used to encrypt the payload.
+  - This field contains an identifier for the encryption key used to encrypt the payload, allowing the receiver to determine which key to use for decryption.
+  - The Key Identifier is a 16-byte value.
+  - Only required if the Encryption Metadata field (Type 0x11) is present and multiple keys are in use.
+  - By default, NODE ID (0x14) can be used as a key identifier if no other key management system is in place.
 
-A NODE MUST validate the command before executing it. If the command is not recognized or cannot be executed, the NODE MUST ignore the command. If the command is validated the NODE SHOULD execute it.
+- **0x18**: Auth Key ID - A short identifier for the key used for HMAC or Signature verification.
+  - Exactly 4 bytes. Using a fixed size keeps packets small and simplifies implementations.
+  - When present with Signature (0x12), the receiver MUST resolve the Ed25519 public key from a local trust store keyed by (NODE ID, Auth Key ID). When present with HMAC (0x10), the receiver MUST resolve the shared secret from the same mapping.
+  - If both Auth Key ID (0x18) and Public Key (0x13) are present, Public Key takes precedence for this packet only.
+  - Implementations SHOULD cache the resolved key material per (NODE ID, Auth Key ID) to avoid including Public Key (0x13) in subsequent packets and to keep steady-state packets small.
 
-The command payload MUST include the following TLVs as defined in section 6:
-* **Command Name**: A string representing the name of the command to be executed.
-* **Command Parameters**: A structured data format (e.g., JSON) containing any parameters required for the command.
-* **Signature - Strong(0xA4)**: An Ed25519 signature for the Command event.
+### Canonicalization (for crypto)
+- Canonical bytes = Header (exact 17 bytes as sent) concatenated with Canonical Payload Bytes.
+- Canonical Payload Bytes are produced by:
+  - Removing HMAC (0x10) and Signature (0x12) fields.
+  - Sorting remaining TLVs by Type (ascending). For identical Type values, preserve original relative order.
+  - If a TLV contains sub-TLVs (e.g., Encryption Metadata 0x11), canonicalize its sub-TLVs by the same rule.
+- The Public Key (0x13), NODE ID (0x14), Timestamp (0x15), Nonce (0x16), Key Identifier (0x17), and Auth Key ID (0x18) are included in the canonical payload if present.
 
-See section 6 for details on TLV format and types.
+### 4.2.1 Encryption Metadata Format
+The Encryption Metadata field (Type 0x11) is structured as a series of TLV encoded sub-fields. The following sub-field types are defined:
+- **0x01**: Algorithm - A 1-byte identifier indicating the encryption algorithm used (e.g., 0x01 for AES-256-GCM).
+- **0x02**: Length - A 1-byte field indicating the length of the IV in bytes. The most significant bit (MSB) is reserved and MUST be set to 0.
+  - This allows for IV lengths up to 127 bytes, which is sufficient for most encryption algorithms.
+  - If present, this Length value MUST exactly match the Length of the IV sub-TLV (0x03). Receivers MUST validate this and reject the packet on mismatch.
+- **0x03**: IV - A variable-length field containing the initialization vector (IV) used for encryption.
+  - The length of the IV depends on the encryption algorithm used (e.g., 12 bytes for AES-256-GCM). For AES-GCM this IV is the nonce.
+- **0x04**: Nonce - A 12-byte nonce used in the encryption process to ensure uniqueness.
+- **0x05**: Key Identifier - A 16-byte identifier for the encryption key used to encrypt the payload.
 
-### 2.2.3 Heartbeat Payload
-For Heartbeat events, the payload MUST contain the NODE's identifier (e.g., a UUID) and MAY include additional status information, such as CPU usage, memory usage, or uptime. The format of the payload is application-specific.
+The Encryption Metadata field MUST contain at least the Algorithm and either the IV (0x03) or the Nonce (0x04) sub-field, depending on the algorithm. Implementations MUST NOT include both IV and Nonce in the same 0x11 field.
 
-The heartbeat payload MUST include the following TLVs as defined in section 6:
-* **Node ID**: A unique identifier for the NODE, such as a UUID.
-* **Uptime**: The NODE's uptime in seconds.
-* **Event Digest**: A rolling hash, Bloom filter, or digest of recent events sent or received by the NODE.
-* **Rate Signal**: Information about the NODE's event sending and receiving rates, as well as any congestion hints (e.g., ECN status).
-* **Propagation Map**: Information about the NODE's position in the mesh, such as hop count from origin, remaining TTL, or origin NODE ID.
-* **Signature - Weak(0xA2)**: An Ed25519 signature for the Heartbeat event.
+Implementations MUST ensure that all sub-TLV lengths fit within the parent 0x11 TLV Length; sub-TLVs MUST NOT overrun the parent value length.
 
-See section 6 for details on TLV format and types.
+### 4.2.2 Available Encryption Algorithms
+- **0x01**: AES-256-GCM - Advanced Encryption Standard (AES) in Galois/Counter Mode (GCM) with a 256-bit key.
+  - Uses a 12-byte IV (nonce). Include IV (0x03); do not include Nonce (0x04).
+  - The application layer MUST handle the encryption and decryption process using this algorithm.
+- **0x02**: ChaCha20-Poly1305 - ChaCha20 stream cipher with Poly1305 message authentication.
+  - Uses a 12-byte nonce. Include Nonce (0x04); do not include IV (0x03).
+  - The application layer MUST handle the encryption and decryption process using this algorithm.
 
-NODEs MAY include any combination of the above TLVs in the Heartbeat payload. The order of the TLVs is not significant, and NODEs MUST be able to parse the payload regardless of the order of the TLVs.
-
-### 2.2.4 Join Payload
-For Join events, the payload MUST include information about the NODE's capabilities and configuration. This information helps other NODEs understand how to interact with the joining NODE.
-
-The join payload MUST include the following TLVs as defined in section 6:
-* **Node ID**: A unique identifier for the NODE, such as a UUID.
-* **Supported Types**: A bit field indicating the event types supported by the NODE.
-* **Max Relationships**: The maximum number of relationships the NODE can support.
-* **Heartbeat Interval**: The recommended interval for sending Heartbeat events.
-* **Status**: Application-specific status information.
-* **Signature - Strong(0xA4)**: An Ed25519 signature for the Join event.
-
-See section 6 for details on TLV format and types.
-
-## 2.4 Time to Live (TTL)
-When creating a new event, a NODE MUST set the TTL field in the IP header. This value indicates the maximum number of hops the event can take before being discarded. As any router following the IP protocol decrements the TTL field by 1, a NODE MUST also decrement the TTL field by 1 before propagating the event to its relationship NODEs. If the TTL reaches 0, the event MUST be discarded and not propagated further.
-
-The TTL field is not part of the EMM packet itself but is included in the IP header of the UDP packet carrying the EMM packet. The initial value of the TTL field is application-specific and MAY be based on factors such as network size, expected event propagation distance, and desired event lifetime. RECOMMENDED default is 64.
-
-## 2.5 Example EMM Packet
-Here is an example of an EMM packet in hexadecimal format:
-```
-01 00 00 01 00 01 00 0F 25 FE 20 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 13 21 1F 48 65 6C 6C 6F 2C 20 45 4D 50 21 20 54 68 69 73 20 69 73 20 61 20 74 65 73 74 2E 20 3A 29
-
-# Explained
-Header (8 Bytes):
-Version: 0b001 (3 bits)
-Flags: 0b00 (2 bits, Urgent not set)
-Type: 0b000 (3 bits, Notification)
-Event ID: 0x0001 (2 Bytes)
-Epoch: 0x0001 (2 Bytes)
-Offset: 0x000F (2 Bytes)
-Payload Length: 0x25 (1 Byte, 37 Bytes payload)
-Payload (37 Bytes):
-Signature TLV: Type 0xFE (1 Byte), Length 0x20 (1 Byte), Value: 32 Bytes (Ed25519 signature, placeholder)
-Priority: 0x13 (1 Byte, Info)
-Format: 0x21 (1 Byte, Plain text)
-Message Length: 0x1F (1 Byte, 31 Bytes message)
-Message: "Hello, EMP! This is a test. :)" (31 Bytes)
-```
-This packet represents a Notification event (Type 0b000) with the Urgent flag not set. The Event ID is 1, and the timestamp indicates when the event was created. The payload length is 15 bytes, and the payload contains a simple notification message. The checksum is calculated over the entire packet to ensure data integrity.
-In this example, the payload might represent a notification message with a priority of "Info" and a format of "Plain text", followed by the actual message content.
-The actual interpretation of the payload would depend on the application-specific format defined for Notification events.
-
-# 3. Protocol Operations
-## 3.1 NODE Joining
-When a NODE wants to join the event mesh, it sends a Join event to announce its presence and capabilities to other NODEs. This event includes information about the supported event types and version information.
-Any receiving NODE that supports the Join event type can process this event and update its list of known NODEs in the mesh. Each NODE MUST store enough information about new NODEs to enable them to re-establish a lost connection.
-
-## 3.2 NODE relationships
-When a NODE receives a Join event from another NODE, it MAY choose to establish a relationship with that NODE. 
-- A NODE MUST accept AT LEAST 10 relationships. Relationships are used to determine which NODEs to send events to and how to route events through the mesh.
-- A NODE MAY choose to limit the number of relationships it establishes based on its capabilities and resources.
-- A NODE MAY choose to prioritize relationships based on factors such as latency, reliability, or event types supported.
-- A NODE MAY choose to drop relationships that are no longer needed or that are not performing well.
-- A NODE MAY choose to periodically send Heartbeat events to refresh its relationships.
-- A NODE MAY choose to send events to all known NODEs or only to a subset of NODEs based on its routing rules or subscriptions.
-
-## 3.3 Event Publishing
-To publish an event, a NODE constructs an EMM packet with the appropriate header and payload, then sends it to its relationship NODEs using UDP. The NODE MAY choose to send the event to all its relationship NODEs or only to a subset based on its routing rules.
-
-## 3.4 Event Receiving and Propagation
-When a NODE receives an EMM packet, it first verifies the checksum to ensure data integrity. If the checksum is valid, the NODE processes the event based on its type and payload. The NODE MAY also choose to propagate the event to other NODEs in the mesh, depending on its routing rules or subscriptions. The only reliability mechanism in EMP is that a NODE MUST send each event to all its relationship NODEs.
-
-When a NODE receives an event, it MUST check the Event ID to determine if it has already processed the event. If the Event ID is new, the NODE processes the event and MUST propagate it to its relationship NODEs. If the Event ID has already been seen, the NODE MUST discard the event to prevent duplicate processing.
-
-- A NODEs MUST decrement the TTL field by 1 before propagating the event. If the TTL reaches 0, the event MUST be discarded and not propagated further. 
-- A NODE MUST NOT modify any other fields in the EMM packet, except for the TTL and Checksum fields. The Checksum MUST be recalculated after modifying the TTL field.
-- A NODE MUST cache Event IDs for a configurable period to prevent processing duplicate events. The cache duration is application-specific and MAY be based on factors such as event frequency and network conditions.
-  - RECOMMENDED default cache duration is 5 minutes.
-- A NODE MAY implement additional filtering or processing logic based on the event type, flags, or payload content. This logic is application-specific and MUST be defined by the application. This MAY include parsing TLVs as defined in Section 6.
-
-## 3.5 Reliability
-EMP is designed to be lightweight and fast, but it does not guarantee absolute reliability. To improve reliability, NODEs can implement application-level acknowledgments or retries for critical events. However, this is optional and depends on the specific use case and requirements of the application.
-
-## 3.6 NODE Leaving
-When a NODE wants to leave the event mesh, it can simply stop sending and receiving events. There is no formal leave process in EMP. Other NODEs MAY choose to remove the leaving NODE from their list of known NODEs after a certain timeout period if they do not receive any Heartbeat events from that NODE.
-
-# 4. Network features
-## 4.1 DSCP usage
-EMP NODEs SHOULD set the DSCP field in the IP header to a value that reflects the priority of the event being transmitted. For example, urgent events MAY be marked with a higher DSCP value to ensure they receive preferential treatment by routers and switches in the network.
-
-| Type  | Type Field = Value  | DSCP Value | Description                               |
-|-------|---------------------|------------|-------------------------------------------|
-| 0b000 | Priority = Trace    | 0x08       | Low priority, non-critical notifications  |
-| 0b000 | Priority = Debug    | 0x10       | Low priority, debugging information       |
-| 0b000 | Priority = Info     | 0x18       | Normal priority, informational messages   |
-| 0b000 | Priority = Notice   | 0x20       | Normal priority, important notifications  |
-| 0b000 | Priority = Warning  | 0x28       | High priority, warning messages           |
-| 0b000 | Priority = Error    | 0x30       | High priority, error messages             |
-| 0b000 | Priority = Critical | 0x38       | Highest priority, critical alerts         |
-| 0b001 | Urgent Flag Set     | 0x38       | Highest priority, urgent commands         |
-| 0b001 | Urgent Flag Clear   | 0x20       | Normal priority, non-urgent commands      |
-| 0b010 | Any                 | 0x10       | Low priority, periodic heartbeat messages |
-| 0b011 | Any                 | 0x20       | Normal priority, join events              |
-
-### 4.1.1 Reference:
-- 0x08 - CS1 (Low priority, non-critical traffic)
-- 0x10 - CS2 (Low priority, debugging traffic)
-- 0x18 - CS3 (Normal priority, general traffic)
-- 0x20 - CS4 (Normal priority, important traffic)
-- 0x28 - CS5 (High priority, warning traffic)
-- 0x30 - CS6 (High priority, error traffic)
-- 0x38 - CS7 (Highest priority, critical traffic)
-- 0x00 - Best Effort (Default for non-EMP traffic)
-
-## 4.2 ECN usage
-EMP NODEs SHOULD set the ECN field in the IP header to indicate their congestion status. The ECN field can take on the following values:
-- 0b00 (Not-ECT): The NODE is not using ECN.
-- 0b01 (ECT(1)): The NODE is using ECN and is not experiencing congestion.
-- 0b10 (ECT(0)): The NODE is using ECN and is not experiencing congestion.
-- 0b11 (CE): The NODE is experiencing congestion.
-
-EMP NODEs SHOULD monitor network conditions and adjust their ECN status accordingly. For example, if a NODE detects packet loss or increased latency, it MAY set the ECN field to CE to indicate congestion. Conversely, if the NODE's network conditions improve, it MAY revert the ECN field to ECT(0) or ECT(1).
-
-When a NODE receives an event with the ECN field set to CE, it SHOULD take appropriate action to reduce its transmission rate or implement congestion control mechanisms. This helps prevent further congestion in the network and ensures that events can be delivered reliably.
-
-## 4.3 QUIC as a transport protocol
-While EMP is designed to work over UDP, it can also be used over QUIC for applications that require additional features such as encryption, authentication, and improved reliability. When using QUIC as the transport protocol, the EMM packet structure and protocol operations remain the same, but the underlying transport layer provides additional capabilities.
-Using QUIC as the transport protocol can be particularly beneficial for applications that require secure communication or need to operate in environments with high packet loss or variable latency. QUIC's built-in congestion control and retransmission mechanisms can help improve the reliability of event delivery in such scenarios.
-When using QUIC, NODEs MUST ensure that the EMM packets are properly encapsulated within QUIC frames and that the QUIC connection is established before sending or receiving events. The application MUST handle the QUIC connection management, including connection establishment, termination, and error handling.
+## 4.3 Example Payload
+An example payload containing a String field, an Integer field, and an HMAC field might look like this (in hexadecimal):
 
 # 5. Security
-## 5.1 Replay attacks
-EMM packets include an Event ID, Epoch, and Offset to help prevent replay attacks. NODEs MUST cache recently seen Event IDs along with their associated Epoch and Offset values for a configurable period (RECOMMENDED default is 5 minutes). If a NODE receives an event with an Event ID, Epoch, and Offset that it has already seen within the cache duration, it MUST discard the event to prevent replay attacks.
+## 5.1 Integrity
+To ensure message integrity, an optional HMAC field (Type 0x10) can be included in the payload. The HMAC is computed using the SHA-256 hash function and a shared secret key known to both the sender and receiver over the canonical bytes (header as sent || canonicalized payload excluding 0x10 and 0x12). If the HMAC field is present, the receiver MUST verify the HMAC in constant-time before processing the payload. If the verification fails, the payload MUST be discarded. When using HMAC, Auth Key ID (0x18) MAY be used to look up the shared secret.
 
-## 5.2 Integrity
-As EMM packets are atomic and self-contained, the integrity of the packet is ensured by the checksum field in the UDP header. NODEs MUST verify the checksum of received packets before processing them. If the checksum is invalid, the NODE MUST discard the packet.
+## 5.2 Confidentiality
+EMP does not provide built-in encryption for the payload. If confidentiality is required, the application layer MUST handle encryption and decryption of the payload. The Encryption Metadata field (Type 0x11) can be used to provide necessary metadata for decryption, such as IV or key identifiers.
 
-## 5.3 Confidentiality
-EMP does not provide built-in encryption or confidentiality mechanisms. If confidentiality is required, NODEs SHOULD use QUIC as the transport protocol, which provides encryption and secure communication.
-Alternatively, NODEs can implement application-level encryption for the payload of EMM packets. In such cases, the application MUST handle key management, encryption, and decryption.
+## 5.3 Authenticity
+To ensure authenticity, an optional Signature field (Type 0x12) can be included in the payload. The signature is computed using the Ed25519 algorithm over the canonical bytes (header as sent || canonicalized payload excluding 0x10 and 0x12) and the sender's private key. If the Signature field is present, the receiver MUST verify the signature using the sender's public key before processing the payload. If the verification fails, the payload MUST be discarded. The public key used for signature verification MUST be provided in a separate Public Key field (Type 0x13) or referenced via Auth Key ID (0x18) in a local trust store keyed by (NODE ID, Auth Key ID).
 
-## 5.4 Authentication
-EMP does not provide built-in authentication mechanisms. If authentication is required, NODEs SHOULD use QUIC as the transport protocol, which provides authentication through TLS.
-Alternatively, NODEs can implement application-level authentication mechanisms, such as digital signatures or HMACs, for the payload of EMM packets. In such cases, the application MUST handle key management and verification.
+## 5.4 Replay Protection
+To protect against replay attacks, receivers MUST primarily use the (NODE ID 0x14, Message ID header) pair to detect duplicates within the [REPLAY_WINDOW](#replay_window). Message IDs MUST be cryptographically random; reuse within the window MUST be treated as replay and rejected.
 
-# 6. Extensions (TLV)
-The EMP protocol allows for application-specific extensions using a Type-Length-Value (TLV) format in the payload of EMM packets. This allows applications to include additional information that is not covered by the standard EMM packet structure.
+Optionally, the Timestamp field (Type 0x15) can be included to add freshness constraints (e.g., reject messages older than the window or outside [CLOCK_SKEW_ALLOWANCE](#clock_skew_allowance)). When both mechanisms are available, Message ID-based replay detection takes precedence; Timestamp serves as an additional freshness check.
 
-The TLV format consists of the following fields:
-| Field  | Size | Description                             |
-|--------|------|-----------------------------------------|
-| Type   | 6b   | A 6-bit field indicating the type of the TLV |
-| Length | 6b   | A 6-bit field indicating the length of the Value field in bytes |
-| Value  | Var  | A variable-length field containing the actual value |
+The application layer MAY implement additional logic (e.g., per-event or per-topic de-duplication) if needed.
 
-## 6.1 TLV Types
-The following TLV types are defined for use in EMP:
+# 6. Packet creation and parsing
+## 6.1 Packet Creation
+1. Construct the payload by encoding the desired fields using the TLV format.
+   1. If encryption is used, include the Encryption Metadata field (Type 0x11) in the payload.
+   2. If HMAC (Type 0x10) or Signature (Type 0x12) is used, then NODE ID (Type 0x14) MUST also be included.
+   3. If Signature (Type 0x12) is used and the event was signed at a different time than the event creation time, then Timestamp (Type 0x15) MUST also be included.
+   4. If using pre-shared keys or pre-registered public keys, include Auth Key ID (0x18) and omit Public Key (0x13). Include Public Key only when the receiver may not have the key.
+2. Order TLV fields as follows:
+   - Data fields by 1-byte Type in ascending order. This also applies recursively to sub-fields like in Encryption Metadata (0x11).
+   - Security fields last, in this order if present:
+     - Public Key (0x13)
+     - Auth Key ID (0x18)
+     - HMAC (0x10) Covers canonical bytes (header + canonicalized payload excluding 0x10 and 0x12)
+     - Signature (0x12) Covers canonical bytes (header + canonicalized payload excluding 0x10 and 0x12); MUST be last
+3. Calculate the Payload Length as the total length of the payload.
+4. Construct the header with the appropriate values for Version, Message ID, Flags, Event Type, Timestamp, and Payload Length.
+5. Concatenate the header and payload to form the complete EMM packet.
+6. Send the EMM packet over UDP to the desired destination.
 
-| Type | Name                  | Length   | Purpose                                                                       |
-|------|-----------------------|----------|-------------------------------------------------------------------------------|
-| 0xA1 | Payload Encoding      | 4b       | zstd, raw, deflate, etc.                                                      |
-| 0xA2 | Signature - Weak      | 4b       | Message integrity                                                             |
-| 0xA3 | Signature - Moderate  | 8b       | Higher trust requirement                                                      |
-| 0xA4 | Signature - Strong    | 16b      | Highest trust requirement                                                     |
-| 0xA5 | Compression algorithm | 4b       | zstd, deflate, lz4, etc.                                                      |
-| 0xA6 | Compression level     | 5b       | Optional decompression guidance                                               |
-| 0xA7 | Event Priority        | 3b       | Low, normal, high                                                             |
-| 0xA8 | Node Fingerprint      | 4B       | Boot nonce, MAC hash, or pubkey hash                                          |
-| 0xA9 | Node ID               | 16B      | Unique node identifier                                                        |
-| 0xAA | Replay Nonce - Short  | 2B       | Random per-event entropy                                                      |
-| 0xAB | Replay Nonce - Long   | 8B       | Higher entropy for stronger anti-replay                                       |
-| 0xAC | Expiry Hint           | 1B       | TTL or offset from timestamp                                                  |
-| 0xAD | Topology Hint         | variable | Known peers, hop distance, region                                             |
-| 0xAE | Trace ID              | 16B      | For observability and correlation                                             |
-| 0xAF | Vendor ID             | 16B      | Identifies the implementer                                                    |
-| 0xB0 | Supported event types | 1B       | Bitfield of supported event types                                             |
-| 0xB1 | Max Relationships     | 6b       | Max number of relationships supported                                         |
-| 0xB2 | Heartbeat Interval    | 1B       | Recommended heartbeat interval (in seconds)                                   |
-| 0xB3 | Uptime                | 4B       | NODE uptime in seconds                                                        |
-| 0xB4 | Event Digest          | 16B      | Rolling hash, Bloom filter, or digest of recent events                        |
-| 0xB5 | Rate Signal           | 6B       | Events sent in last interval, events received, ECN status or congestion hints |
-| 0xB6 | Propagation Map       | 6B       | Hop count from origin, remaining TTL, origin node ID                          |
-| 0xB7 | Command Name          | variable | Name of the command to be executed                                            |
-| 0xB8 | Command Parameters    | variable | Parameters required for the command                                           |
+## 6.2 Packet Parsing
+1. Receive the EMM packet over UDP.
+2. Extract the header fields: Version, Message ID, Flags, Event Type, Timestamp, and Payload Length.
+3. Validate the Version field to ensure compatibility.
+4. Read the payload based on the Payload Length.
+5. Verify that parsing the TLVs consumes exactly Payload Length bytes (no leftover or short read).
+6. Parse the payload by reading each TLV field and processing known field types.
+7. Build Canonical Payload Bytes (see Canonicalization) and, if present, verify HMAC (0x10) first using constant-time comparison. Drop the packet if verification fails.
+8. If Signature (0x12) is present, verify the signature using Public Key (0x13) or by resolving Auth Key ID (0x18) in a local trust store keyed by (NODE ID, Auth Key ID). Drop the packet if verification fails.
+9. Apply replay protection: reject if Message ID has been seen before from the same NODE ID within REPLAY_WINDOW (see Replay Cache).
+10. Process the event.
 
-* **0xA1 - Payload Encoding**: Indicates the encoding used for the payload (e.g., ASCII, UTF-8). This helps the receiving NODE to correctly decode the payload.
-  * Length: 4 bytes
-  * Possible values:
-  * 0b0001 - Raw (binary)
-  * 0b0010 - ASCII
-  * 0b0011 - UTF-8
-  * 0b0100 - UTF-16
-  * 0b0101 - ISO-8859-1
-  * 0b0110 - cp1252
-  * 0b0111-0b1111 - Reserved
-* **0xA2 - Signature - Weak**: A weak signature for message integrity.
-  * Length: 4 bytes
-  * Use case: Non-critical messages where performance is prioritized over security.
-* **0xA3 - Signature - Moderate**: A moderate-strength signature for higher trust requirements.
-  * Length: 8 bytes
-  * Use case: Important messages that require a balance between security and performance.
-* **0xA4 - Signature - Strong**: A strong signature for the highest trust requirements.
-  * Length: 16 bytes
-  * Use case: Critical messages that require maximum security.
-* **0xA5 - Compression Algorithm**: Indicates the compression algorithm used for the payload (e.g., zstd, deflate, lz4).
-  * Length: 4 bytes
-  * Possible values:
-  * 0b0001 - None
-  * 0b0010 - zstd
-  * 0b0011 - deflate
-  * 0b0100 - lz4
-  * 0b0101 - gzip
-  * 0b0110-0b1111 - Reserved
-* **0xA6 - Compression level**: Provides optional guidance for decompression.
-  * Length: 5 bytes
-  * Interpreted as an integer value from 0 (no compression) to 31 (maximum compression). Higher values indicate more aggressive compression, which may require more processing power to decompress. Different algorithms may have different interpretations of compression levels.
-* **0xA7 - Event Priority**: Indicates the priority of the event (e.g., Trace, Debug...).
-  * Length: 3 bytes
-  * Possible values:
-  * 0b001 - Trace
-  * 0b010 - Debug
-  * 0b011 - Info
-  * 0b100 - Notice
-  * 0b101 - Warning
-  * 0b110 - Error
-  * 0b111 - Critical
-* **0xA8 - Node Fingerprint**: A fingerprint of the NODE, such as a boot nonce, MAC hash, or public key hash.
-  * Length: 4 bytes
-  * Use case: Identifying the NODE uniquely within the mesh.
-* **0xA9 - Node ID**: A unique identifier for the NODE, such as a UUID.
-  * Length: 16 bytes
-  * Use case: Identifying the NODE uniquely within the mesh.
-* **0xAA - Replay Nonce - Short**: A short random nonce for per-event entropy to prevent replay attacks.
-  * Length: 2 bytes
-  * Use case: Adding entropy to events to prevent replay attacks.
-* **0xAB - Replay Nonce - Long**: A longer random nonce for higher entropy to prevent replay attacks.
-  * Length: 8 bytes
-  * Use case: Adding higher entropy to events to prevent replay attacks.
-* **0xAC - Expiry Hint**: A hint for the expiry of the event, such as TTL or offset from the timestamp.
-  * Length: 1 byte
-  * Use case: Indicating how long the event is valid.
-* **0xAD - Topology Hint**: Information about the NODE's known peers, hop distance, or region.
-  * Length: Variable
-  * Use case: Providing context about the NODE's position in the mesh.
-  * This TLV can contain multiple sub-TLVs to represent different aspects of the topology hint. For example:
-    * Sub-TLV 1: Known Peers
-      * Type: 0x01
-      * Length: N (number of known peers)
-      * Value: List of known peer NODE IDs (each NODE ID is 16 bytes)
-    * Sub-TLV 2: Hop Distance
-      * Type: 0x02
-      * Length: 1 byte
-      * Value: Hop distance from the origin NODE (0-255)
-    * Sub-TLV 3: Region
-      * Type: 0x03
-      * Length: N (length of region string)
-      * Value: Region identifier (e.g., "us-west", "eu-central")
-* **0xAE - Trace ID**: A unique identifier for tracing and correlating events.
-  * Length: 16 bytes
-  * Use case: Observability and correlation of events across the mesh. Globally unique identifier (e.g., UUID).
-* **0xAF - Vendor ID**: An identifier for the implementer of the NODE.
-  * Length: 16 bytes
-  * Use case: Identifying the vendor or organization that implemented the NODE. Globally unique identifier (e.g., UUID).
-* **0xB0 - Supported event types**: A bitfield indicating the event types supported by the NODE.
-  * Length: 1 byte
-  * Bitfield representation:
-  * Bit 0: Notification (0b000)
-  * Bit 1: Command (0b001)
-  * Bit 2: Heartbeat (0b010)
-  * Bit 3: Join (0b011)
-  * Bits 4-7: Reserved for future event types
-* **0xB1 - Max Relationships**: The maximum number of relationships the NODE can support.
-  * Length: 6 bits (can be packed into a byte with 2 bits reserved)
-  * Use case: Indicating the NODE's capacity for relationships within the mesh.
-* **0xB2 - Heartbeat Interval**: The recommended interval for sending Heartbeat events.
-  * Length: 1 byte
-  * Use case: Suggesting how frequently the NODE should send Heartbeat events (in seconds).
-* **0xB3 - Uptime**: The NODE's uptime in seconds.
-  * Length: 4 bytes
-  * Use case: Providing information about how long the NODE has been running.
-* **0xB4 - Event Digest**: A rolling hash, Bloom filter, or digest of recent events that the NODE has processed.
-  * Length: 16 bytes
-  * Use case: Helping other NODEs to understand what events have been seen recently.
-* **0xB5 - Rate Signal**: Information about the rate of events being sent and received by the NODE.
-  * Length: 6 bytes
-  * Use case: Providing metrics such as the number of events sent in the last interval, the number of events received, and any ECN status or congestion hints.
-  * Bit 1-2: ECN status
-    * 0b00 - Not-ECT
-    * 0b01 - ECT(1)
-    * 0b10 - ECT(0)
-    * 0b11 - CE
-  * Bit 3-9: Events sent in last interval (0-31)
-  * Bit 10-16: Events received in last interval (0-31)
-* **0xB6 - Propagation Map**: Information about the propagation of events through the mesh.
-  * Length: 6 bytes
-  * Use case: Providing metrics such as the hop count from the origin, the remaining TTL, and the origin NODE ID (opaque).
-  * Bit 1-5: Hop count from origin (0-31)
-  * Bit 6-10: Remaining TTL (0-31)
-  * Bit 11-16: Reserved
-* **0xB7 - Command Name**: The name of the command to be executed.
-  * Length: Variable
-  * Use case: Specifying the command that the receiving NODE should execute.
-* **0xB8 - Command Parameters**: The parameters required for the command.
-  * Length: Variable
-  * Use case: Providing additional information needed to execute the command, typically in a structured format (e.g., JSON).
+### 6.3 Parsing and validation rules
+- Reject packet if:
+  - Payload Length exceeds [MAX_PAYLOAD_SIZE](#max_payload_size) or actual payload bytes do not match length.
+  - Any TLV overruns the payload buffer (Length too large) or nested sub-TLVs overrun their parent Length.
+  - Duplicate singleton TLVs occur: 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 (unless explicitly allowed by future versions). Data TLVs (0x01–0x05) MAY repeat.
+  - HMAC (0x10) appears after Signature (0x12) or Signature is not the last field.
+  - Flags contain non-zero reserved bits for version 1.
+  - Total TLV count (including sub-TLVs) exceeds [MAX_TLV_COUNT](#max_tlv_count).
+- Unknown TLV Types MUST be ignored (skipped) but still contribute to canonicalization ordering if present.
+- HMAC verification MUST use constant-time comparison.
+
+# 7. Replay cache (operational guidance)
+- A receiver MUST maintain a replay cache keyed by (NODE ID 0x14, Message ID header 4 bytes).
+- Entries SHOULD expire after [REPLAY_WINDOW](#replay_window). Implementations MAY cap cache size and evict oldest entries when limits are reached.
+- Message ID MUST be cryptographically random. Reuse within REPLAY_WINDOW MUST be treated as replay.
+
+# 8. Minimum Interop Profile v1
+A smallest common set for verifiable events on constrained networks:
+- Required TLVs:
+  - Event Name (0x01)
+  - NODE ID (0x14)
+  - Auth Key ID (0x18) — exactly 4 bytes
+  - One of: HMAC (0x10) or Signature (0x12)
+- Ordering:
+  - Data TLVs sorted by Type ascending, then security TLVs: [Public Key (0x13) if needed] -> Auth Key ID (0x18) -> HMAC (0x10) -> Signature (0x12, last)
+- Key lookups: Receivers resolve keys from a local trust store keyed by (NODE ID, Auth Key ID). Public Key (0x13) is only needed if the receiver lacks a key for this pair.
+
+# Variables
+### MAX_PACKET_SIZE
+* **Value**: 548 (RFC 791 Minimum MTU(576) - IP(20) and UDP(8) headers) bytes
+* **Description**:
+This size is chosen to ensure that packets can be transmitted over networks with a minimum MTU without fragmentation, which is important for maintaining low latency and high reliability in event delivery.
+
+### MAX_PAYLOAD_SIZE
+* **Value**: 531 (MAX_PACKET_SIZE(548) - headers(17)) bytes
+* **Description**:
+This allows for the fixed-size header while keeping the total packet size within the recommended limit of [MAX_PACKET_SIZE](#max_packet_size).
+
+### REPLAY_WINDOW
+* **Value**: 300 seconds (5 minutes)
+* **Description**:
+This window is suggested to balance between allowing for some network delay and clock skew, while still providing effective protection against replay attacks.
+
+### CLOCK_SKEW_ALLOWANCE
+* **Value**: 120 seconds (2 minutes)
+* **Description**:
+This allowance is recommended to account for differences in system clocks between NODEs, ensuring that legitimate messages are not rejected due to minor time discrepancies.
+
+### MAX_TLV_COUNT
+* **Value**: 64 (RECOMMENDED)
+* **Description**:
+Parsers MUST reject packets that contain more than this number of TLVs (including sub-TLVs) to bound worst-case parsing cost and mitigate abuse.
